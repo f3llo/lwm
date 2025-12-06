@@ -2,7 +2,7 @@
 
 set -e
 
-make build
+#make build
 
 XEPHYR=$(command -v Xephyr) # Absolute path of Xephyr's bin
 xinit ./xinitrc -- \

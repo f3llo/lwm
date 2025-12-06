@@ -1,7 +1,7 @@
 #!/bin/sh
 
-xclock &
-xeyes &
+#xclock &
+#xeyes &
 #rlaunch &
 sleep 2 &
 # sleep 2 && xterm &

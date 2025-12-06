@@ -3,6 +3,7 @@
 #include "X11/X.h"
 #include "X11/cursorfont.h"
 #include <X11/Xlib.h>
+#include <X11/keysym.h>
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -16,46 +17,19 @@ void panic(char *msg){
   exit(EXIT_FAILURE);
 }
 
+// Put this into a struct eventually
+
 Display *dpy;
 Window root;
 
 Window windows[64] = {};
 int next_window = 0;
-
-void launch_rmenu(void){
-
-  XUngrabPointer(dpy, CurrentTime);
-  XUngrabKeyboard(dpy, CurrentTime);
-  XFlush(dpy);
-
-  if (fork() == 0){
-    setsid();
-    execlp("rlaunch", "rlaunch", NULL);
-    _exit(1);
-  }
-}
+int focused_window = -1;
 
 void grabKey(char *key, unsigned int mod){
-  KeySym sym = XStringToKeysym(key);
-  KeyCode code = XKeysymToKeycode(dpy, sym);
-  XGrabKey(dpy, code, mod, root, false, GrabModeAsync, GrabModeAsync);
+  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym(key)), mod, root, false, GrabModeAsync, GrabModeAsync);
   XSync(dpy, false);
 }
-
-void onCreateNotify(XCreateWindowEvent *e){
-  windows[next_window] = e->window;
-  printf("windows %lu\n", windows[next_window]);
-  ++next_window;
-}
-
-void onMapRequest(XMapRequestEvent *e){
-  printf("map %lu\n", e->window);
-  XMapWindow(dpy, e->window);
-  XSetInputFocus(dpy, e->window, RevertToPointerRoot, CurrentTime);
-}
-
-//Unmap?
-//Change window
 
 void grabAll(void){
   // Initializes all grabs
@@ -66,13 +40,39 @@ void grabAll(void){
   XGrabButton(dpy, 1, Mod1Mask, DefaultRootWindow(dpy), True,
             ButtonPressMask|ButtonReleaseMask|PointerMotionMask, GrabModeAsync, GrabModeAsync, None, None);
  
-  // 'KeyPress' Event when pressing "a" + "Shift"
+  // Init shortcuts
   grabKey("F1", Mod1Mask);
   grabKey("d", Mod1Mask);
+  grabKey("Tab", Mod1Mask);
+}
+
+void focusWindow(void); // Focus
+
+void onMapRequest(XMapRequestEvent *e){
+  printf("map %lu\n", e->window);
+
+  /*
+  int found = 0;
+  for (int i = 0; i < next_window; ++i) {
+    if (windows[i] == e->window) {
+      found = 1;
+      break;
+    }
+  }
+  if (!found && next_window < 64) {
+    windows[next_window++] = e->window;
+  }
+  focused_window = -1;
+  */
+
+  XMapWindow(dpy, e->window);
+  XRaiseWindow(dpy, e->window);
+  XSetInputFocus(dpy, e->window, RevertToPointerRoot, CurrentTime);
 }
 
 int main(void){
-  
+ 
+  // Init
   dpy = XOpenDisplay(NULL);
   if (dpy == NULL) {
     panic("Unable to open a X display");
@@ -81,51 +81,78 @@ int main(void){
   root = DefaultRootWindow(dpy);
   
   XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask);
-  XSync(dpy, 0);
 
   Cursor cursor = XCreateFontCursor(dpy, XC_sb_left_arrow);
   XDefineCursor(dpy, root, cursor);
-  XSync(dpy, 0);
 
   grabAll();
+
+  XSync(dpy, 0);
+
+  // Main
 
   XEvent e;
   XButtonEvent start;
   XWindowAttributes attr;
 
   start.subwindow = None;
+
   for (;;) {
     XNextEvent(dpy, &e);
 
     switch (e.type) {
       case ButtonPress:
+        XGetWindowAttributes(dpy, start.subwindow, &attr);
+				XSetInputFocus(dpy, start.subwindow, RevertToParent, CurrentTime);
+        puts("Button pressed!");
+
         XAllowEvents(dpy, ReplayPointer, CurrentTime);
         XSync(dpy, 0);
-        puts("Button pressed!");
 
         break;
 
       case KeyPress:
+        XGetWindowAttributes(dpy, start.subwindow, &attr);
+				XSetInputFocus(dpy, start.subwindow, RevertToParent, CurrentTime);
         puts("Key pressed!");
+
         KeyCode code = e.xkey.keycode;
         unsigned int mods = e.xkey.state;
 
-        // e.xbutton.subwindow != None
-        if (e.xkey.subwindow != None) {
-          if (code == XKeysymToKeycode(dpy, XStringToKeysym("F1")) && (mods & Mod1Mask)) {
-            XRaiseWindow(dpy, e.xkey.subwindow);
+        // Move all actions to Mod1Mask if
+
+        if (code == XKeysymToKeycode(dpy, XStringToKeysym("F1")) && (mods & Mod1Mask)) {
+          XRaiseWindow(dpy, e.xkey.subwindow);
+        }
+        if (code == XKeysymToKeycode(dpy, XStringToKeysym("d")) && (mods & Mod1Mask)) {
+          // Run application launcher
+
+          if (fork() == 0){
+            setsid();
+            execlp("rlaunch", "rlaunch", NULL);
+            _exit(1);
           }
-          if (code == XKeysymToKeycode(dpy, XStringToKeysym("d")) && (mods & Mod1Mask)) {
-            // Run application launcher
-            launch_rmenu();
-            grabAll();
-            XFlush(dpy);
+          grabAll();
+          XFlush(dpy);
+        }
+        if (code == XKeysymToKeycode(dpy, XStringToKeysym("Tab")) && (mods & Mod1Mask)) {
+          // Cycle to next window
+          if (next_window > 0) {
+            focused_window = (focused_window + 1) % next_window;
+            XRaiseWindow(dpy, windows[focused_window]);
+            XSetInputFocus(dpy, windows[focused_window], RevertToPointerRoot, CurrentTime);
+            printf("Switched focus to window %lu\n", windows[focused_window]);
           }
         }
+
+        // Kill window and WM and Raise window
         break;
 
       case CreateNotify:
-        onCreateNotify(&e.xcreatewindow);
+        windows[next_window] = e.xcreatewindow.window;
+        ++next_window;
+
+        printf("windows %lu\n", windows[next_window]);
         printf("New window %d\n", e.xcreatewindow.type);
         break;
 
@@ -134,12 +161,12 @@ int main(void){
         break;
      
       default:
-        puts("Unexpected event.");
+        //puts("Unexpected event.");
         break;
+
+      // Destroy notify
     }
 
-
-  
     // Temporary location of resizing and moving logic
     if(e.type == ButtonPress && e.xbutton.subwindow != None)
     {
