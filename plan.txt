@@ -1,0 +1,16 @@
+Basic frame was created with a lot of help from both AI and other projects
+
+Steps to make it useful:
+
+- Make it tilling
+
+Step 1:
+
+Resize a window upon creation
+
+How will this be done?
+
+- Several window containers like i3
+- Status bar
+
+Eventually redo the entire thing YOURSELF!
